@@ -1,4 +1,17 @@
 import os
+import threading
+from http.server import SimpleHTTPRequestHandler, HTTPServer
+
+def run_dummy_server():
+    # Render က ပေးမယ့် PORT ကို ယူ၊ မရှိရင် 10000 ကို သုံး
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    print(f"Dummy server running on port {port}")
+    server.serve_forever()
+
+# Thread တစ်ခုခွဲပြီး Server ကို နောက်ကွယ်ကနေ Run ထားခိုင်းမယ်
+threading.Thread(target=run_dummy_server, daemon=True).start()
+import os
 import logging
 import yt_dlp
 from telegram import Update
