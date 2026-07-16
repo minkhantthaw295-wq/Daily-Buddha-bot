@@ -1,151 +1,122 @@
-import asyncio
-import sys
-import logging
-import random
 import os
+import logging
+import yt_dlp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from googleapiclient.discovery import build
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import pytz
 
-# Render/Render Web Port အတွက် aiohttp ထည့်သွင်းခြင်း
-from aiohttp import web
+# Logging သတ်မှတ်ခြင်း (ဆာဗာ Error စစ်ဆေးရန်)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-from config import BOT_TOKEN, YOUTUBE_API_KEY, CHANNEL_ID, TIMEZONE
-from keyboards import get_main_menu
+# Environment Variables မှ Telegram Token ယူခြင်း
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-def search_youtube_dhamma(query):
-    if not YOUTUBE_API_KEY:
-        return "⚠️ စနစ်ချို့ယွင်းနေပါသည်။ YouTube API Key မရှိသေးသဖြင့် ရှာမရနိုင်ပါ။"
-    
-    try:
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        search_query = f"{query} တရားတော်"
-        
-        request = youtube.search().list(
-            q=search_query,
-            part='snippet',
-            maxResults=3,
-            type='video'
-        )
-        response = request.execute()
-        
-        results = []
-        for item in response.get('items', []):
-            title = item['snippet']['title']
-            video_id = item['id']['videoId']
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            results.append(f"🎥 **{title}**\n🔗 {video_url}\n")
-            
-        if not results:
-            return "🔍 စိတ်မရှိပါနဲ့ခင်ဗျာ၊ ရှာဖွေမှုရလဒ် မတွေ့ရှိပါ။"
-            
-        return "\n".join(results)
-    except Exception as e:
-        logging.error(f"YouTube Search Error: {e}")
-        return "⚠️ တရားတော်ရှာဖွေရာတွင် အဆင်မပြေဖြစ်နေပါသည်။ ခဏနေမှ ပြန်လည်စမ်းသပ်ပေးပါ။"
-
-# Scheduler Error မတက်စေရန် Parameter တွင် *args ထည့်သွင်းထားသည်
-async def post_dhamma_to_channel(app: Application, *args):
-    if not YOUTUBE_API_KEY:
-        return
-        
-    try:
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        request = youtube.search().list(
-            q="တရားတော်များ နေ့စဉ်နာယူရန်",
-            part='snippet',
-            maxResults=15,
-            type='video'
-        )
-        response = request.execute()
-        
-        items = response.get('items', [])
-        if items:
-            selected_video = random.choice(items)
-            title = selected_video['snippet']['title']
-            video_id = selected_video['id']['videoId']
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            
-            message = f"🙏 **နေ့စဉ် ဓမ္မဒါန တရားတော်** 🙏\n\nတရားတော်အမည် - {title}\n\nနာယူကြည်ညိုရန် အောက်ပါလင့်ခ်ကို နှိပ်ပါ -\n🔗 {video_url}"
-            
-            await app.bot.send_message(chat_id=CHANNEL_ID, text=message)
-            logging.info("Successfully posted to channel.")
-    except Exception as e:
-        logging.error(f"Auto Post Failure: {e}")
-
+# 📌 /start နှိပ်လျှင် "ရှင်" ကို လုံးဝဖျက်ပြီး ယောက်ျားလေးသီးသန့်ပုံစံ တိုတိုရှင်းရှင်း ပြသခြင်း
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🙏 မင်္ဂလာပါရှင်\n\nDaily Buddha Dhamma Bot မှ ကြိုဆိုပါတယ်။\nသင် နာယူလိုသော တရားတော်အမည် သို့မဟုတ် ဆရာတော်အမည်ကို ရိုက်ထည့်ပြီး ရှာဖွေနိုင်ပါတယ်ခင်ဗျာ။",
-        reply_markup=get_main_menu()
+    start_text = (
+        "မင်္ဂလာပါဗျာ 🙏\n\n"
+        "Daily Buddha Dhamma Bot မှ ကြိုဆိုပါတယ်ဗျာ။\n"
+        "သင် နာယူလိုသော တရားတော်အမည် သို့မဟုတ် ဆရာတော်ဘွဲ့အမည်ကို ရိုက်ထည့်ပြီး ရှာဖွေနိုင်ပါတယ်ခင်ဗျာ။"
     )
+    await update.message.reply_text(start_text)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    
-    if user_text in ["📖 တရားတော်ရှာရန်", "👤 ဆရာတော်များ", "🎥 Video တရား", "🎧 Audio တရား", "📅 နေ့စဉ်တရားတော်", "❤️ အကြိုက်ဆုံး", "ℹ️ အကူအညီ"]:
-        await update.message.reply_text(
-            f"✨ '{user_text}' အတွက် တရားတော်အမည် သို့မဟုတ် ဆရာတော်အမည်ကို ရိုက်ထည့်ပေးပါခင်ဗျာ။ Bot မှ အလိုအလျောက် ရှာဖွေပေးပါမည်။"
-        )
-    else:
-        waiting_msg = await update.message.reply_text("🔍 တရားတော်များကို ရှာဖွေပေးနေပါသည်၊ ခဏစောင့်ပေးပါ...")
-        search_result = search_youtube_dhamma(user_text)
-        try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=waiting_msg.message_id)
-        except Exception:
-            pass
-        await update.message.reply_text(search_result)
+# 📌 တရားရှာဖွေပြီး အသံဖိုင် (Audio) ပြောင်းလဲပေးသည့် လုပ်ဆောင်ချက်
+async def search_and_send_dhamma(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text
+    status_message = await update.message.reply_text("တရားတော်ကို အသံဖိုင်ပြောင်းလဲနေပါတယ်... ခဏစောင့်ပေးပါ 🙏")
 
-# Render Port အတွက် အလုပ်လုပ်မည့် ရိုးရှင်းသော ကူညီပံ့ပိုးမှု Function
-async def handle_ping(request):
-    return web.Response(text="Bot is alive")
+    # YouTube Search Option (အကောင်းဆုံး ဗီဒီယို ၁ ပုဒ်တည်း ရှာမည်)
+    ydl_opts_search = {
+        'format': 'bestaudio/best',
+        'default_search': 'ytsearch1',
+        'quiet': True,
+    }
 
-async def main():
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_search) as ydl:
+            info = ydl.extract_info(query, download=False)
+            
+            if 'entries' not in info or not info['entries']:
+                await status_message.edit_text("တောင်းပန်ပါတယ်ခင်ဗျာ၊ အဆိုပါတရားတော်ကို ရှာမတွေ့ပါ။")
+                return
+
+            video_data = info['entries'][0]
+            video_url = video_data['webpage_url']
+            title = video_data.get('title', 'တရားတော်')
+            duration = video_data.get('duration', 0)
+
+            # 🛑 ဆာဗာ RAM မပြည့်စေရန် မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) ထက် ကျော်လွန်ပါက ပယ်ချခြင်း
+            if duration > 1800:
+                await status_message.edit_text("⚠️ ဤတရားတော်သည် မိနစ် ၃၀ ထက် ကျော်လွန်နေသဖြင့် အသံဖိုင်ပြောင်းလဲ၍ မရနိုင်ပါ။ မိနစ် ၃၀ အောက် တရားတော်များကိုသာ ရှာပေးပါရန်။")
+                return
+
+            # YouTube Title ထဲမှ ဆရာတော်ဘွဲ့နှင့် တရားခေါင်းစဉ်ကို ပိုင်းခြားရန် ကြိုးစားခြင်း
+            performer = "ဆရာတော်"
+            track_title = title
+            
+            if " - " in title:
+                parts = title.split(" - ", 1)
+                performer = parts[0].strip()
+                track_title = parts[1].strip()
+            elif "၏" in title:
+                parts = title.split("၏", 1)
+                performer = parts[0].strip()
+                track_title = parts[1].strip()
+
+            # 🔊 အသံအရည်အသွေး လုံးဝကြည်လင်ပြတ်သားစေရန် (အမြင့်ဆုံး 320kbps ထားခြင်း)
+            filename = f"dhamma_{video_data['id']}"
+            ydl_opts_download = {
+                'format': 'bestaudio/best',
+                'outtmpl': f'{filename}.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '320',
+                }],
+                'quiet': True,
+            }
+
+            # အသံဖိုင်ဒေါင်းလုဒ်ဆွဲခြင်း
+            with yt_dlp.YoutubeDL(ydl_opts_download) as ydl_down:
+                ydl_down.download([video_url])
+
+            audio_file_path = f"{filename}.mp3"
+            
+            if os.path.exists(audio_file_path):
+                # "ခဏစောင့်ပါ" ဆိုသည့် စာတိုကို ဖျက်လိုက်မည်
+                await status_message.delete()
+
+                # User အလုပ်မရှုပ်စေရန် ဗီဒီယိုလင့်ခ်များမပါဘဲ စာသားတိုတို ၂ ကြောင်းသာ ပြမည်
+                caption_text = f"🙏 ဆရာတော် - {performer}\n📌 တရားတော် - {track_title}"
+
+                # သီချင်းဖွင့်သလို တိုက်ရိုက်နားထောင်နိုင်ရန် Telegram Audio ဖြင့် ပို့ခြင်း
+                with open(audio_file_path, 'rb') as audio:
+                    await update.message.reply_audio(
+                        audio=audio,
+                        title=track_title,
+                        performer=performer,
+                        caption=caption_text
+                    )
+                
+                # နေရာလွတ်ရအောင် စက်ထဲက ဒေါင်းထားသောဖိုင်ကို ပြန်ဖျက်ခြင်း
+                os.remove(audio_file_path)
+            else:
+                await status_message.edit_text("အသံဖိုင်ပြောင်းလဲခြင်း မအောင်မြင်ပါ။ နောက်တစ်ကြိမ် ပြန်စမ်းကြည့်ပါ။")
+
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        await status_message.edit_text("တရားတော်ကို ဒေါင်းလုဒ်ဆွဲရာတွင် အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါသည်။")
+
+def main():
     if not BOT_TOKEN:
-        print("Error: TELEGRAM_BOT_TOKEN is missing!")
-        sys.exit(1)
+        print("Error: TELEGRAM_BOT_TOKEN ဖြည့်သွင်းရန် လိုအပ်ပါသည်။")
+        return
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_send_dhamma))
 
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
-    scheduler.add_job(post_dhamma_to_channel, 'cron', hour=7, minute=0, args=[app])
-    scheduler.add_job(post_dhamma_to_channel, 'cron', hour=13, minute=0, args=[app])
-    scheduler.add_job(post_dhamma_to_channel, 'cron', hour=19, minute=0, args=[app])
-    scheduler.start()
+    application.run_polling()
 
-    await app.initialize()
-    await app.updater.start_polling()
-    await app.start()
-    
-    print("Buddha Bot is successfully running...")
-    
-    # Render Web Service Port Binding ပြဿနာကို ဖြေရှင်းရန် Web Server မောင်းနှင်ခြင်း
-    web_app = web.Application()
-    web_app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    
-    # Render မှ ပေးမည့် Port သို့မဟုတ် Default 8080 တွင် Listen လုပ်မည်
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    
-    # Bot အမြဲပွင့်နေစေရန် စောင့်ဆိုင်းခြင်း
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        await app.updater.stop()
-        await app.stop()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot stopped.")
+if __name__ == '__main__':
+    main()
