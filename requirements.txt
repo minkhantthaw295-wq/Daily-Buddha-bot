@@ -1,6 +1,4 @@
 python-telegram-bot==20.8
+google-api-python-client
 yt-dlp
 ffmpeg-python
-python-telegram-bot==20.8
-yt-dlp
-google-api-python-client
