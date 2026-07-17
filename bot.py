@@ -1,4 +1,9 @@
 import os
+# ဆာဗာပေါ်တွင် ffmpeg ရှိမရှိ စစ်ဆေးပြီး မရှိပါက အလိုအလျောက် သွင်းပေးရန်
+if os.system("ffmpeg -version") != 0:
+    os.system("apt-get update && apt-get install -y ffmpeg")
+
+import os
 import logging
 import threading
 import yt_dlp
