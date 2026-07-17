@@ -23,11 +23,15 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # Environment Variables မှ Telegram Token ယူခြင်း
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# ⚠️ ဤနေရာတွင် သင်၏ YouTube Data API v3 Key ကို ထည့်သွင်းပါ
-YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY_HERE"
+# ✅ ပြင်ဆင်ပြီး - ရိုက်ထည့်စရာမလိုဘဲ Render ၏ Environment Variable မှ တိုက်ရိုက်လှမ်းယူမည်
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 def youtube_search(query, is_paritta=False):
     """YouTube API သုံးပြီး Music သီချင်းသံများ မပါဘဲ တရားတော်စစ်စစ်များကိုသာ စစ်ထုတ်ရှာဖွေပေးခြင်း"""
+    if not YOUTUBE_API_KEY:
+        logging.error("YouTube API Key is missing in Environment Variables!")
+        return None
+
     # သီချင်းသံများ လုံးဝမလာစေရန် တရားတော်သီးသန့် Keywords များဖြင့် ပိတ်ရှာမည်
     if is_paritta:
         refined_query = f"{query} ပရိတ်တော် တရားတော်"
@@ -41,7 +45,7 @@ def youtube_search(query, is_paritta=False):
             part="snippet",
             maxResults=1,
             type="video",
-            videoCategoryId="29" # Nonprofits & Activism သို့မဟုတ် တရားတော်အမျိုးအစားများကို ပိုဦးစားပေးရန်
+            videoCategoryId="29" # Nonprofits & Activism အမျိုးအစားကို ပိုဦးစားပေးရန်
         )
         response = request.execute()
         
