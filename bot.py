@@ -1,9 +1,4 @@
 import os
-# ဆာဗာပေါ်တွင် ffmpeg ရှိမရှိ စစ်ဆေးပြီး မရှိပါက အလိုအလျောက် သွင်းပေးရန်
-if os.system("ffmpeg -version") != 0:
-    os.system("apt-get update && apt-get install -y ffmpeg")
-
-import os
 import logging
 import threading
 import yt_dlp
@@ -12,6 +7,15 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from googleapiclient.discovery import build
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+
+# --- 🛠️ ဤနေရာတွင် static-ffmpeg လမ်းကြောင်းကို ချိတ်ဆက်ပေးခြင်း (Render Error ကာကွယ်ရန်) ---
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+    logging.info("Static FFmpeg paths added successfully.")
+except Exception as e:
+    logging.error(f"Static FFmpeg Error: {str(e)}")
+# ----------------------------------------------------------------------------------
 
 # Logging သတ်မှတ်ခြင်း
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -50,7 +54,7 @@ def youtube_search(query, is_paritta=False):
             videoCategoryId="29"
         )
         response = request.execute()
-
+        
         if response.get("items"):
             video_id = response["items"][0]["id"]["videoId"]
             return f"https://www.youtube.com/watch?v={video_id}"
@@ -64,7 +68,7 @@ async def process_download(query, message_object, context, is_paritta=False):
     status_message = await message_object.reply_text(f"'{query}' တရားတော်ကို ရှာဖွေနေပါတယ်... ခဏစောင့်ပေးပါ 🙏")
 
     video_url = youtube_search(query, is_paritta)
-
+    
     if not video_url:
         await status_message.edit_text("တောင်းပန်ပါတယ်ခင်ဗျာ၊ အဆိုပါတရားတော်ကို ရှာမတွေ့ပါ (သို့မဟုတ်) YouTube API Error ရှိနေပါသည်။")
         return
@@ -83,12 +87,12 @@ async def process_download(query, message_object, context, is_paritta=False):
 
         await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ စုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... 🙏")
 
-        # 一ပိုင်းချင်းစီကို ဖြတ်ပြီး ဒေါင်းလုဒ်ဆွဲကာ ချက်ချင်းပို့ခြင်း
+        # တစ်ပိုင်းချင်းစီကို ဖြတ်ပြီး ဒေါင်းလုဒ်ဆွဲကာ ချက်ချင်းပို့ခြင်း
         for part in range(total_parts):
             start_time = part * segment_duration
-
+            
             filename = f"dhamma_part_{part}_{info['id']}"
-
+            
             # Render ပေါ်က ffmpeg ကို အသုံးပြုပြီး အပိုင်းလိုက် တိတိကျကျ ဖြတ်တောက်ဒေါင်းလုဒ်ဆွဲခြင်း
             ydl_opts_download = {
                 'format': 'bestaudio/best',
@@ -105,7 +109,7 @@ async def process_download(query, message_object, context, is_paritta=False):
                 ydl_down.download([video_url])
 
             audio_file_path = f"{filename}.mp3"
-
+            
             if os.path.exists(audio_file_path):
                 caption_text = f"🙏 တရားတော် - {title}\n📌 အပိုင်း - ({part + 1}/{total_parts})"
                 with open(audio_file_path, 'rb') as audio:
@@ -120,7 +124,7 @@ async def process_download(query, message_object, context, is_paritta=False):
                 await message_object.reply_text(f"⚠️ အပိုင်း ({part + 1}) ကို ဖန်တီး၍ မရနိုင်ဖြစ်သွားပါသည်။")
 
         await status_message.delete()
-
+        
     except Exception as e:
         logging.error(f"Download/Split Error: {str(e)}")
         await status_message.edit_text("တရားတော်ကို ရယူပြီး အပိုင်းခွဲရာတွင် အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါသည်။")
@@ -136,7 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
-
+    
     if "ပရိတ်" in user_text:
         keyboard = [
             [InlineKeyboardButton("✨ မင်္ဂလသုတ်", callback_data="မင်္ဂလသုတ်"), InlineKeyboardButton("✨ မေတ္တာသုတ်", callback_data="မေတ္တာသုတ်")],
@@ -155,3 +159,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await process_download(query.data, query.message, context, is_paritta=True)
 
+def main():
+    if not BOT_TOKEN:
+        print("Error: TELEGRAM_BOT_TOKEN ဖြည့်သွင်းရန် လိုအပ်ပါသည်။")
+        return
+
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_click))
+
+    print("Bot is successfully started with Audio Splitting system...")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
