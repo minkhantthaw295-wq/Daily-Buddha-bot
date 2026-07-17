@@ -20,10 +20,8 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# Environment Variables မှ Telegram Token ယူခြင်း
+# Environment Variables မှ Telegram Token နှင့် API Key ယူခြင်း
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-
-# ✅ ပြင်ဆင်ပြီး - ရိုက်ထည့်စရာမလိုဘဲ Render ၏ Environment Variable မှ တိုက်ရိုက်လှမ်းယူမည်
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 def youtube_search(query, is_paritta=False):
@@ -32,7 +30,6 @@ def youtube_search(query, is_paritta=False):
         logging.error("YouTube API Key is missing in Environment Variables!")
         return None
 
-    # သီချင်းသံများ လုံးဝမလာစေရန် တရားတော်သီးသန့် Keywords များဖြင့် ပိတ်ရှာမည်
     if is_paritta:
         refined_query = f"{query} ပရိတ်တော် တရားတော်"
     else:
@@ -45,7 +42,7 @@ def youtube_search(query, is_paritta=False):
             part="snippet",
             maxResults=1,
             type="video",
-            videoCategoryId="29" # Nonprofits & Activism အမျိုးအစားကို ပိုဦးစားပေးရန်
+            videoCategoryId="29"
         )
         response = request.execute()
         
@@ -73,20 +70,21 @@ async def process_download(query, message_object, context, is_paritta=False):
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(video_url, download=False)
             title = info.get('title', query)
-            duration = info.get('duration', 0) # စက္ကန့်အလိုက် ကြာချိန်
+            duration = info.get('duration', 0)
 
-        # မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) ကို အခြေခံပြီး အပိုင်း ဘယ်နှစ်ပိုင်း ခွဲရမလဲ တွက်ချက်ခြင်း
+        # မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) စီ အပိုင်းခွဲရန် တွက်ချက်ခြင်း
         segment_duration = 1800 
         total_parts = math.ceil(duration / segment_duration)
 
-        await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ စုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... ခေတ္တစောင့်ဆိုင်းပေးပါ 🙏")
+        await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ စုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... 🙏")
 
-        # တစ်ပိုင်းချင်းစီကို ဖြတ်ပြီး ဒေါင်းလုဒ်ဆွဲကာ ချက်ချင်းပို့ခြင်း (Server RAM မပြည့်စေရန်)
+        # တစ်ပိုင်းချင်းစီကို ဖြတ်ပြီး ဒေါင်းလုဒ်ဆွဲကာ ချက်ချင်းပို့ခြင်း
         for part in range(total_parts):
             start_time = part * segment_duration
             
-            # YouTube ထံမှ သတ်မှတ်ထားသော မိနစ် ၃၀ အပိုင်းကိုသာ တိုက်ရိုက် ဖြတ်တောက်ဒေါင်းလုဒ်ဆွဲခြင်း
             filename = f"dhamma_part_{part}_{info['id']}"
+            
+            # Render ပေါ်က ffmpeg ကို အသုံးပြုပြီး အပိုင်းလိုက် တိတိကျကျ ဖြတ်တောက်ဒေါင်းလုဒ်ဆွဲခြင်း
             ydl_opts_download = {
                 'format': 'bestaudio/best',
                 'outtmpl': f'{filename}.%(ext)s',
@@ -94,7 +92,7 @@ async def process_download(query, message_object, context, is_paritta=False):
                 'external_downloader_args': {
                     'ffmpeg_args': ['-ss', str(start_time), '-t', str(segment_duration)]
                 },
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'}],
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
                 'quiet': True,
             }
 
@@ -112,11 +110,11 @@ async def process_download(query, message_object, context, is_paritta=False):
                         performer="Daily Buddha Bot",
                         caption=caption_text
                     )
-                os.remove(audio_file_path) # ပို့ပြီးတာနဲ့ စက်ထဲက ချက်ချင်းဖျက်မယ်
+                os.remove(audio_file_path) # ပို့ပြီးတာနဲ့ ဖျက်မယ်
             else:
                 await message_object.reply_text(f"⚠️ အပိုင်း ({part + 1}) ကို ဖန်တီး၍ မရနိုင်ဖြစ်သွားပါသည်။")
 
-        await status_message.delete() # လုပ်ငန်းစဉ်အားလုံးပြီးပါက status စာသားကို ဖျက်မည်
+        await status_message.delete()
         
     except Exception as e:
         logging.error(f"Download/Split Error: {str(e)}")
@@ -134,25 +132,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
     
-    # 📌 ပရိတ်ကြီး ၁၁ သုတ်တော်များအတွက် ခလုတ် (၁၁) ခု အပြည့်အစုံ ပြသခြင်း
     if "ပရိတ်" in user_text:
         keyboard = [
             [InlineKeyboardButton("✨ မင်္ဂလသုတ်", callback_data="မင်္ဂလသုတ်"), InlineKeyboardButton("✨ မေတ္တာသုတ်", callback_data="မေတ္တာသုတ်")],
             [InlineKeyboardButton("✨ ရတနသုတ်", callback_data="ရတနသုတ်"), InlineKeyboardButton("✨ ခန္ဓသုတ်", callback_data="ခန္ဓသုတ်")],
             [InlineKeyboardButton("✨ မောရသုတ်", callback_data="မောရသုတ်"), InlineKeyboardButton("✨ ဝဋ္ဋသုတ်", callback_data="ဝဋ္ဋသုတ်")],
             [InlineKeyboardButton("✨ ဓဇဂ္ဂသုတ်", callback_data="ဓဇဂ္ဂသုတ်"), InlineKeyboardButton("✨ အာဋာနာဋိယသုတ်", callback_data="အာဋာနာဋိယသုတ်")],
-            [InlineKeyboardButton("✨ အင်္ဂုလိမာလသုတ်", callback_data="အင်္ဂုလိမာလသုတ်"), InlineKeyboardButton("✨ ပုဗ္ဗဏှသုတ်", callback_data="ပုဗ္ဗဏှသုတ်")],
+            [InlineKeyboardButton("✨ အင်္ဂုလိမာလသုတ်", callback_data="อင်္ဂုလိမာလသုတ်"), InlineKeyboardButton("✨ ပုဗ္ဗဏှသုတ်", callback_data="ပုဗ္ဗဏှသုတ်")],
             [InlineKeyboardButton("✨ ဓရဏသုတ်", callback_data="ဓရဏသုတ်")]
         ]
         await update.message.reply_text("🪷 **ပရိတ်ကြီး ၁၁ သုတ်တော်များ** 🪷\n\nနာယူလိုသော သုတ်တော်ကို ရွေးချယ်ပါ -", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        # ပုံမှန်တရားတော်များ ရှာဖွေမှု
         await process_download(user_text, update.message, context, is_paritta=False)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # ခလုတ်နှိပ်လျှင် ပရိတ်တော်စစ်စစ်ထွက်ရန် True ပေးလိုက်သည်
     await process_download(query.data, query.message, context, is_paritta=True)
 
 def main():
