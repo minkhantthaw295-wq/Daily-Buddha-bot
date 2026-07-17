@@ -1,8 +1,9 @@
 import os
 import logging
 import threading
-import yt_dlp
 import math
+import requests
+import subprocess
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from googleapiclient.discovery import build
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -52,44 +53,61 @@ def youtube_search(query, is_paritta=False):
         response = request.execute()
         
         if response.get("items"):
-            video_id = response["items"][0]["id"]["videoId"]
-            return f"https://www.youtube.com/watch?v={video_id}"
+            return response["items"][0]["id"]["videoId"]
         return None
     except Exception as e:
         logging.error(f"YouTube API Error: {str(e)}")
         return None
 
+# 📌 YouTube Bot Block ကို ကျော်ဖြတ်ရန် ဒေါင်းလုဒ်ဆွဲရလွယ်ကူသော ကမ္ဘာသုံး အလုပ်လုပ်ဆုံး API Instances များ စာရင်း
+def get_invidious_stream_url(video_id):
+    instances = [
+        "https://vid.puffyan.us",
+        "https://invidious.namazso.eu",
+        "https://invidious.projectsegfau.lt",
+        "https://invidious.privacydev.net",
+        "https://yewtu.be"
+    ]
+    
+    for instance in instances:
+        try:
+            url = f"{instance}/api/v1/videos/{video_id}"
+            res = requests.get(url, timeout=10).json()
+            
+            # ဒေါင်းလုဒ်လုပ်ရန် တိုက်ရိုက် Audio Stream URL ကို ရှာဖွေခြင်း
+            if "adaptiveFormats" in res:
+                for fmt in res["adaptiveFormats"]:
+                    if "audio/" in fmt.get("type", ""):
+                        stream_url = fmt.get("url")
+                        if stream_url:
+                            return stream_url, res.get("title", "Dhamma Talk"), res.get("lengthSeconds", 0)
+            
+            if "formatStreams" in res and res["formatStreams"]:
+                return res["formatStreams"][0]["url"], res.get("title", "Dhamma Talk"), res.get("lengthSeconds", 0)
+        except Exception as e:
+            logging.warning(f"Failed to fetch from {instance}: {str(e)}")
+            continue
+            
+    return None, None, None
+
 # 📌 တရားရှာဖွေပြီး မိနစ် ၃၀ စီ အပိုင်းခွဲ၍ ဒေါင်းလုဒ်ဆွဲကာ ပို့ပေးသည့် အဓိက လုပ်ဆောင်ချက်
 async def process_download(query, message_object, context, is_paritta=False):
     status_message = await message_object.reply_text(f"'{query}' တရားတော်ကို ရှာဖွေနေပါတယ်... ခဏစောင့်ပေးပါ 🙏")
 
-    video_url = youtube_search(query, is_paritta)
+    video_id = youtube_search(query, is_paritta)
     
-    if not video_url:
+    if not video_id:
         await status_message.edit_text("တောင်းပန်ပါတယ်ခင်ဗျာ၊ အဆိုပါတရားတော်ကို ရှာမတွေ့ပါ (သို့မဟုတ်) YouTube API Error ရှိနေပါသည်။")
         return
 
-    try:
-        # 🌟 YouTube ရဲ့ 429 Bot Block ကို ကျော်ရန် ကမ္ဘာသုံး အစွမ်းထက်ဆုံး Client Settings များ 🌟
-        ydl_opts_info = {
-            'format': 'bestaudio/best', 
-            'quiet': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android_music', 'ios', 'web_embedded'],
-                    'player_skip': ['js', 'webpage'],
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Android 14; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0'
-            }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            title = info.get('title', query)
-            duration = info.get('duration', 0)
+    # Invidious API သုံးပြီး YouTube Block ကို လုံးဝကျော်ခွကာ Audio Stream Link ကို တိုက်ရိုက်ရယူခြင်း
+    stream_url, title, duration = get_invidious_stream_url(video_id)
+    
+    if not stream_url:
+        await status_message.edit_text("⚠️ ဆာဗာလိုင်းများ မအားလပ်သေးပါသဖြင့် ခဏနေမှ ပြန်လည်ရှာဖွေပေးပါရန် 🙏")
+        return
 
+    try:
         # မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) စီ အပိုင်းခွဲရန် တွက်ချက်ခြင်း
         segment_duration = 1800 
         total_parts = math.ceil(duration / segment_duration)
@@ -99,35 +117,26 @@ async def process_download(query, message_object, context, is_paritta=False):
 
         for part in range(total_parts):
             start_time = part * segment_duration
-            filename = f"dhamma_part_{part}_{info['id']}"
-            
-            # ဒေါင်းလုဒ်ဆွဲသည့် နေရာတွင်လည်း Bot Block ကျော်ရန် parameters များ အပြည့်အစုံထည့်သွင်းခြင်း
-            ydl_opts_download = {
-                'format': 'bestaudio/best',
-                'outtmpl': f'{filename}.%(ext)s',
-                'external_downloader': 'ffmpeg',
-                'external_downloader_args': {
-                    'ffmpeg_args': ['-ss', str(start_time), '-t', str(segment_duration)]
-                },
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'quiet': True,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android_music', 'ios', 'web_embedded'],
-                        'player_skip': ['js', 'webpage'],
-                    }
-                },
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Android 14; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0'
-                }
-            }
-
-            with yt_dlp.YoutubeDL(ydl_opts_download) as ydl_down:
-                ydl_down.download([video_url])
-
+            filename = f"dhamma_part_{part}_{video_id}"
             audio_file_path = f"{filename}.mp3"
             
-            if os.path.exists(audio_file_path):
+            # 🔥 [အရေးကြီးဆုံးအချက်] yt-dlp ကို လုံးဝမသုံးတော့ဘဲ ffmpeg ကို stream_url ကနေ တိုက်ရိုက် ဒေါင်းလုဒ်ဆွဲခိုင်းခြင်း
+            # ဒါမှ YouTube ရဲ့ Bot Block စနစ်တွေနဲ့ လုံးဝ မငြိစွန်းတော့မှာဖြစ်ပါတယ်
+            cmd = [
+                'ffmpeg', '-y',
+                '-ss', str(start_time),
+                '-t', str(segment_duration),
+                '-i', stream_url,
+                '-vn',
+                '-acodec', 'libmp3lame',
+                '-ab', '192k',
+                audio_file_path
+            ]
+            
+            # FFmpeg ကို Background တွင် Run စေခြင်း
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            if os.path.exists(audio_file_path) and os.path.getsize(audio_file_path) > 1000:
                 caption_text = f"🙏 တရားတော် - {title}\n📌 အပိုင်း - ({part + 1}/{total_parts})"
                 with open(audio_file_path, 'rb') as audio:
                     await message_object.reply_audio(
@@ -186,7 +195,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_click))
 
-    logging.info("Bot is successfully started with Native Android Music Client system...")
+    logging.info("Bot is successfully started with Pure FFmpeg Direct Streaming system...")
     application.run_polling()
 
 if __name__ == '__main__':
