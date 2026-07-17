@@ -3,7 +3,6 @@ import logging
 import threading
 import yt_dlp
 import math
-import requests
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from googleapiclient.discovery import build
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -53,72 +52,56 @@ def youtube_search(query, is_paritta=False):
         response = request.execute()
         
         if response.get("items"):
-            return response["items"][0]["id"]["videoId"]
+            video_id = response["items"][0]["id"]["videoId"]
+            return f"https://www.youtube.com/watch?v={video_id}"
         return None
     except Exception as e:
         logging.error(f"YouTube API Error: {str(e)}")
         return None
 
-# 📌 YouTube Bot Block ကို ကျော်ဖြတ်ရန် ကြားခံ Invidious API သုံး၍ Stream URL ရှာပေးသည့် စနစ်
-def get_invidious_stream_url(video_id):
-    # အလုပ်လုပ်တတ်သော အများသုံး Invidious Servers များ စာရင်း
-    instances = [
-        "https://invidious.nerdvpn.de",
-        "https://yewtu.be",
-        "https://inv.tux.digital",
-        "https://invidious.flokinet.to"
-    ]
-    
-    for instance in instances:
-        try:
-            url = f"{instance}/api/v1/videos/{video_id}"
-            res = requests.get(url, timeout=10).json()
-            
-            # အသံဖိုင် သီးသန့်ထုတ်ပေးထားသော URL ကို ရှာဖွေခြင်း
-            if "adaptiveFormats" in res:
-                for fmt in res["adaptiveFormats"]:
-                    if "audio/" in fmt.get("type", ""):
-                        return fmt["url"], res.get("title", "Dhamma Talk"), res.get("lengthSeconds", 0)
-            
-            # အကယ်၍ adaptive မတွေ့ပါက ရိုးရိုး format ထဲမှ ရှာခြင်း
-            if "formatStreams" in res and res["formatStreams"]:
-                return res["formatStreams"][0]["url"], res.get("title", "Dhamma Talk"), res.get("lengthSeconds", 0)
-        except Exception as e:
-            logging.warning(f"Failed to fetch from {instance}: {str(e)}")
-            continue
-            
-    return None, None, None
-
 # 📌 တရားရှာဖွေပြီး မိနစ် ၃၀ စီ အပိုင်းခွဲ၍ ဒေါင်းလုဒ်ဆွဲကာ ပို့ပေးသည့် အဓိက လုပ်ဆောင်ချက်
 async def process_download(query, message_object, context, is_paritta=False):
     status_message = await message_object.reply_text(f"'{query}' တရားတော်ကို ရှာဖွေနေပါတယ်... ခဏစောင့်ပေးပါ 🙏")
 
-    video_id = youtube_search(query, is_paritta)
+    video_url = youtube_search(query, is_paritta)
     
-    if not video_id:
+    if not video_url:
         await status_message.edit_text("တောင်းပန်ပါတယ်ခင်ဗျာ၊ အဆိုပါတရားတော်ကို ရှာမတွေ့ပါ (သို့မဟုတ်) YouTube API Error ရှိနေပါသည်။")
         return
 
-    # Invidious Proxy သုံးပြီး Bot Block မထိဘဲ အချက်အလက်နှင့် Stream URL ဆွဲထုတ်ခြင်း
-    stream_url, title, duration = get_invidious_stream_url(video_id)
-    
-    if not stream_url:
-        await status_message.edit_text("⚠️ YouTube ဆာဗာများ အလုပ်မလုပ်ပါသဖြင့် ခဏကြာမှ ပြန်လည်ကြိုးစားပေးပါရန် 🙏")
-        return
-
     try:
+        # 🌟 YouTube ရဲ့ 429 Bot Block ကို ကျော်ရန် ကမ္ဘာသုံး အစွမ်းထက်ဆုံး Client Settings များ 🌟
+        ydl_opts_info = {
+            'format': 'bestaudio/best', 
+            'quiet': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android_music', 'ios', 'web_embedded'],
+                    'player_skip': ['js', 'webpage'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Android 14; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0'
+            }
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            title = info.get('title', query)
+            duration = info.get('duration', 0)
+
         # မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) စီ အပိုင်းခွဲရန် တွက်ချက်ခြင်း
         segment_duration = 1800 
         total_parts = math.ceil(duration / segment_duration)
         if total_parts == 0: total_parts = 1
 
-        await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ สုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... 🙏")
+        await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ စုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... 🙏")
 
         for part in range(total_parts):
             start_time = part * segment_duration
-            filename = f"dhamma_part_{part}_{video_id}"
+            filename = f"dhamma_part_{part}_{info['id']}"
             
-            # `yt-dlp` ကို YouTube ဆီ မလွှတ်တော့ဘဲ ကြားခံ Stream URL ကို တိုက်ရိုက်ခေါ်ခိုင်းခြင်း
+            # ဒေါင်းလုဒ်ဆွဲသည့် နေရာတွင်လည်း Bot Block ကျော်ရန် parameters များ အပြည့်အစုံထည့်သွင်းခြင်း
             ydl_opts_download = {
                 'format': 'bestaudio/best',
                 'outtmpl': f'{filename}.%(ext)s',
@@ -128,10 +111,19 @@ async def process_download(query, message_object, context, is_paritta=False):
                 },
                 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
                 'quiet': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android_music', 'ios', 'web_embedded'],
+                        'player_skip': ['js', 'webpage'],
+                    }
+                },
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Android 14; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0'
+                }
             }
 
             with yt_dlp.YoutubeDL(ydl_opts_download) as ydl_down:
-                ydl_down.download([stream_url])
+                ydl_down.download([video_url])
 
             audio_file_path = f"{filename}.mp3"
             
@@ -194,7 +186,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_click))
 
-    logging.info("Bot is successfully started with Invidious Proxy & Audio Splitting system...")
+    logging.info("Bot is successfully started with Native Android Music Client system...")
     application.run_polling()
 
 if __name__ == '__main__':
