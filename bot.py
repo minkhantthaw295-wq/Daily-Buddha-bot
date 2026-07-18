@@ -1,9 +1,10 @@
 import os
 import logging
 import threading
+import subprocess
 from http.server import SimpleHTTPRequestHandler, HTTPServer
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Logging စနစ်
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -19,62 +20,23 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# 📢 ကြော်ငြာစာသားကို မန်မိုရီထဲတွင် ယာယီသိမ်းဆည်းထားမည့်နေရာ (အစပိုင်းတွင် လုံးဝ Empty ဖြစ်နေမည်၊ ဘာလင့်ခ်မှ မပါပါ)
+# 📢 ကြော်ငြာစာသား (အစပိုင်းတွင် အလွတ်ဖြစ်ပြီး၊ အစ်ကို /setad ပို့မှသာ အလုပ်လုပ်မည်)
 CURRENT_AD_TEXT = ""
 
-# 📌 ၁။ ဆရာတော်ကြီးများ၏ တရားတော်များ (Direct MP3 Link များ သို့မဟုတ် Telegram File ID များ)
-DHAMMA_AUDIO_SOURCES = {
-    "သီတဂူ_တရားတော်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", 
-    "ချမ်းမြေ့_တရားတော်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    "တိပိဋက_တရားတော်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
-}
-
-# 📌 ၂။ ပရိတ်တော်များအတွက် Direct MP3 Link များ သို့မဟုတ် Telegram File ID များ
-PARITTA_AUDIO_SOURCES = {
-    "မင်္ဂလသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3", 
-    "မေတ္တာသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-    "ရတနသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
-    "ခန္ဓသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3",
-    "မောရသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
-    "ဝဋ္ဋသုတ်": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3"
-}
-
-# --- Bot Commands Handlers ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start Command ပို့လျှင် ပြသမည့်စာ (ပုံမှန်အချိန်တွင် ကြော်ငြာလုံးဝမပါပါ)"""
+    """/start ပြသမည့်စာ"""
     start_text = (
         "မင်္ဂလာပါဗျာ 🙏\n\n"
         "Daily Buddha Dhamma Bot မှ ကြိုဆိုပါတယ်ဗျာ။\n"
-        "တရားတော်များ နာယူရန်အတွက် အောက်ခြေရှိ **Menu** ခလုတ်မှတစ်ဆင့် စိတ်ကြိုက်ရွေးချယ်နိုင်ပါတယ်ခင်ဗျာ။"
+        "နာယူလိုသော **တရားတော်အမည်** သို့မဟုတ် **ပရိတ်တော်အမည်** ကို စာရိုက်၍ ရှာဖွေနိုင်ပါတယ်ခင်ဗျာ။"
     )
-    # အစ်ကို သီးသန့်ထည့်ထားတဲ့ ကြော်ငြာစာသားရှိမှသာ အောက်တွင် ကပ်ပြမည်။
     final_text = f"{start_text}\n\n{CURRENT_AD_TEXT}" if CURRENT_AD_TEXT else start_text
     await update.message.reply_text(final_text, parse_mode="Markdown" if CURRENT_AD_TEXT else None, disable_web_page_preview=True)
-
-async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/audio ဆရာတော်ကြီးများ၏ တရားတော်များ ခလုတ်စာရင်း"""
-    keyboard = [
-        [InlineKeyboardButton("🎙️ သီတဂူဆရာတော်ဘုရားကြီး", callback_data="သီတဂူ_တရားတော်")],
-        [InlineKeyboardButton("🎙️ ချမ်းမြေ့ဆရာတော်ဘုရားကြီး", callback_data="ချမ်းမြေ့_တရားတော်")],
-        [InlineKeyboardButton("🎙️ တိပိဋကဆရာတော်ဘုရားကြီး", callback_data="တိပိဋက_တရားတော်")]
-    ]
-    await update.message.reply_text("🪷 **နာယူလိုသော ဆရာတော်ကြီးများ၏ တရားတော်ကို ရွေးချယ်ပါ** 🪷", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def paritta_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/paritta ပရိတ်တော်များ ခလုတ်စာရင်း"""
-    keyboard = [
-        [InlineKeyboardButton("✨ မင်္ဂလသုတ်", callback_data="မင်္ဂလသုတ်"), InlineKeyboardButton("✨ မေတ္တာသုတ်", callback_data="မေတ္တာသုတ်")],
-        [InlineKeyboardButton("✨ ရတနသုတ်", callback_data="ရတနသုတ်"), InlineKeyboardButton("✨ ခန္ဓသုတ်", callback_data="ခန္ဓသုတ်")],
-        [InlineKeyboardButton("✨ မောရသုတ်", callback_data="မောရသုတ်"), InlineKeyboardButton("✨ ဝဋ္ဋသုတ်", callback_data="ဝဋ္ဋသုတ်")]
-    ]
-    await update.message.reply_text("🪷 **နာယူပူဇော်လိုသော ပရိတ်သုတ်တော်ကို ရွေးချယ်ပါ** 🪷", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # 🛠️ [အစ်ကို့အတွက် သီးသန့် ကြော်ငြာ စီမံခန့်ခွဲမှု Command]
 async def set_ad_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """အစ်ကိုက `/setad [စာသား]` ဟု ပို့လိုက်မှသာ ကြော်ငြာဝင်မည့်စနစ်"""
     global CURRENT_AD_TEXT
-    
     ad_input = " ".join(context.args)
     
     if not ad_input:
@@ -83,63 +45,77 @@ async def set_ad_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     CURRENT_AD_TEXT = ad_input
-    await update.message.reply_text(f"✅ ကြော်ငြာအသစ်ကို အောင်မြင်စွာ သိမ်းဆည်းလိုက်ပါပြီဗျာ -\n\n{CURRENT_AD_TEXT}")
+    await update.message.reply_text(f"✅ ကြော်ငြာအသစ်ကို သိမ်းဆည်းလိုက်ပါပြီဗျာ -\n\n{CURRENT_AD_TEXT}")
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User များ ခလုတ်နှိပ်သည့်အခါ တရားဖိုင် ထုတ်ပေးခြင်း"""
-    query = update.callback_query
-    await query.answer()
-    choice = query.data
+async def search_and_download_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User ရိုက်လိုက်တဲ့ စာသားကို YouTube ပေါ်မှာ Auto ရှာပြီး MP3 တန်းပို့ပေးမည့်စနစ်"""
+    query = update.message.text
     
-    audio_source = PARITTA_AUDIO_SOURCES.get(choice) or DHAMMA_AUDIO_SOURCES.get(choice)
+    # Bot ရိုက်ထားတဲ့ Command တွေကို ကျော်ရန်
+    if query.startswith('/'):
+        return
+
+    status_msg = await update.message.reply_text(f"🔍 '{query}' ကို အင်တာနက်ပေါ်တွင် အလိုအလျောက် ရှာဖွေနေပါသည်... 🙏")
     
-    if audio_source:
-        clean_name = choice.replace('_', ' ')
-        status_msg = await query.message.reply_text(f"🔄 {clean_name} ကို စနစ်ထဲမှ ဆွဲထုတ်နေပါသည်... ขဏစောင့်ပေးပါ 🙏")
+    # ဖိုင်သိမ်းမည့် နာမည် သတ်မှတ်ခြင်း
+    output_filename = f"dhamma_{update.message.chat_id}"
+    output_path = f"{output_filename}.mp3"
+    
+    try:
+        # yt-dlp ကို သုံးပြီး YouTube ပေါ်ကနေ အကောင်းဆုံး အသံဖိုင်ကို Auto ရှာပြီး ဒေါင်းလုဒ်ဆွဲခြင်း
+        cmd = [
+            "yt-dlp",
+            f"ytsearch1:{query} တရားတော်", # တရားတော် စာသားကို နောက်က Auto တွဲရှာပေးခြင်း
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "0", # အကောင်းဆုံး အသံကြည်လင်မှု ရရှိရန်
+            "-o", f"{output_filename}.%(ext)s",
+            "--no-playlist"
+        ]
         
-        try:
-            caption_text = f"🙏 {clean_name} နာယူပူဇော်ရန်။"
+        # ဒေါင်းလုဒ်လုပ်ခြင်းကို စတင်သည်
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        if os.path.exists(output_path):
+            await status_msg.edit_text("🔄 အသံဖိုင် ပြောင်းလဲခြင်း ပြီးမြောက်ပါပြီ။ Bot မှ ပို့ပေးနေပါသည်... 📦")
             
-            # အစ်ကို လိုအပ်လို့ `/setad` နဲ့ ထည့်ထားတဲ့ ကြော်ငြာစာသားရှိမှသာ အောက်ခြေတွင် တွဲပေးမည်။
+            caption_text = f"🙏 {query} နာယူပူဇော်ရန်။"
             if CURRENT_AD_TEXT:
                 caption_text += f"\n\n{CURRENT_AD_TEXT}"
                 
-            await query.message.reply_audio(
-                audio=audio_source, 
-                caption=caption_text,
-                title=clean_name,
-                performer="Daily Buddha Bot",
-                parse_mode="Markdown" if CURRENT_AD_TEXT else None
-            )
+            # တရားအသံဖိုင်ကို တန်းပို့ပေးခြင်း
+            with open(output_path, 'rb') as audio_file:
+                await update.message.reply_audio(
+                    audio=audio_file,
+                    caption=caption_text,
+                    title=query,
+                    performer="Daily Buddha Bot",
+                    parse_mode="Markdown" if CURRENT_AD_TEXT else None
+                )
+            
+            # ပို့ပြီးရင် ဖုန်းမပြည့်အောင် ဖိုင်ကို ချက်ချင်း ပြန်ဖျက်သည်
+            os.remove(output_path)
             await status_msg.delete()
-        except Exception as e:
-            logging.error(f"Audio Send Error: {str(e)}")
-            await status_msg.edit_text("⚠️ တရားဖိုင်လင့်ခ် ချို့ယွင်းချက်ကြောင့် မရနိုင်သေးပါဗျာ။")
-    else:
-        await query.message.reply_text(f"⚠️ {choice.replace('_', ' ')} အား စနစ်ထဲတွင် ရှာမတွေ့သေးပါ။")
-
-async def handle_user_text_restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User များ စာလျှောက်ရိုက်ခြင်းကို ကာကွယ်ရန်"""
-    await update.message.reply_text(
-        "⚠️ တောင်းပန်ပါတယ်ခင်ဗျာ။ စာရိုက်၍ ရှာဖွေခြင်းကို ပိတ်ထားပါသည်။ အောက်ခြေရှိ **Menu** ခလုတ်ကိုနှိပ်၍ တရားတော်များကိုသာ ရွေးချယ်နာယူပေးပါရန် 🙏"
-    )
+        else:
+            await status_msg.edit_text("⚠️ တောင်းပန်ပါတယ်ဗျာ။ အဲဒီတရားတော်ကို ရှာမတွေ့ပါ သို့မဟုတ် အသံဖိုင် ပြောင်းလဲ၍ မရပါဗျာ။")
+            
+    except Exception as e:
+        logging.error(f"Auto Search Error: {str(e)}")
+        await status_msg.edit_text("⚠️ စနစ်အတွင်း အမှားအယွင်း ဖြစ်ပေါ်သွားပါသဖြင့် ခဏနေမှ ပြန်စမ်းပေးပါဗျာ။")
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
 def main():
     if not BOT_TOKEN: return
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # 3-Menu Layout Commands
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("audio", audio_command))
-    application.add_handler(CommandHandler("paritta", paritta_command))
+    application.add_handler(CommandHandler("setad", set_ad_command)) # ကြော်ငြာ ထိန်းချုပ်ရန်
     
-    # အစ်ကို ကြော်ငြာပြောင်းရန် သီးသန့် Command
-    application.add_handler(CommandHandler("setad", set_ad_command)) 
-    
-    application.add_handler(CallbackQueryHandler(button_click))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_restrict))
+    # User ရိုက်သမျှ စာသားကို Auto ရှာပေးမည့် Handler
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_download_audio))
 
-    logging.info("Dynamic Flexible Ad Bot successfully started...")
+    logging.info("YouTube Audio Search Bot successfully started...")
     application.run_polling()
 
 if __name__ == '__main__':
