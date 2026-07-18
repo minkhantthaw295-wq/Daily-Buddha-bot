@@ -1,7 +1,8 @@
 import os
 import logging
 import threading
-import subprocess
+import urllib.request
+import re
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -33,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_text = f"{start_text}\n\n{CURRENT_AD_TEXT}" if CURRENT_AD_TEXT else start_text
     await update.message.reply_text(final_text, parse_mode="Markdown" if CURRENT_AD_TEXT else None, disable_web_page_preview=True)
 
-# 🛠️ [အစ်ကို့အတွက် သီးသန့် ကြော်ငြာ စီမံခန့်ခွဲမှု Command]
+# 🛠️ [အစ်ကို့အတွက် ကြော်ငြာ အဖွင့်/အပိတ် Command]
 async def set_ad_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """အစ်ကိုက `/setad [စာသား]` ဟု ပို့လိုက်မှသာ ကြော်ငြာဝင်မည့်စနစ်"""
     global CURRENT_AD_TEXT
@@ -47,75 +48,52 @@ async def set_ad_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     CURRENT_AD_TEXT = ad_input
     await update.message.reply_text(f"✅ ကြော်ငြာအသစ်ကို သိမ်းဆည်းလိုက်ပါပြီဗျာ -\n\n{CURRENT_AD_TEXT}")
 
-async def search_and_download_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User ရိုက်လိုက်တဲ့ စာသားကို YouTube ပေါ်မှာ Auto ရှာပြီး MP3 တန်းပို့ပေးမည့်စနစ်"""
+async def search_buddha_dhamma(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User ရိုက်လိုက်တဲ့ စာသားကို YouTube ပေါ်မှာ ခေါင်းစဉ်အတိုင်း Auto ရှာပြီး ကစားသမားလင့်ခ် တန်းပေးမည့်စနစ်"""
     query = update.message.text
     
-    # Bot ရိုက်ထားတဲ့ Command တွေကို ကျော်ရန်
     if query.startswith('/'):
         return
 
-    status_msg = await update.message.reply_text(f"🔍 '{query}' ကို အင်တာနက်ပေါ်တွင် အလိုအလျောက် ရှာဖွေနေပါသည်... 🙏")
-    
-    # ဖိုင်သိမ်းမည့် နာမည် သတ်မှတ်ခြင်း
-    output_filename = f"dhamma_{update.message.chat_id}"
-    output_path = f"{output_filename}.mp3"
+    status_msg = await update.message.reply_text(f"🔍 '{query}' တရားတော်အား အင်တာနက်ပေါ်တွင် အလိုအလျောက် ရှာဖွေနေပါသည်... 🙏")
     
     try:
-        # yt-dlp ကို သုံးပြီး YouTube ပေါ်ကနေ အကောင်းဆုံး အသံဖိုင်ကို Auto ရှာပြီး ဒေါင်းလုဒ်ဆွဲခြင်း
-        cmd = [
-            "yt-dlp",
-            f"ytsearch1:{query} တရားတော်", # တရားတော် စာသားကို နောက်က Auto တွဲရှာပေးခြင်း
-            "-x",
-            "--audio-format", "mp3",
-            "--audio-quality", "0", # အကောင်းဆုံး အသံကြည်လင်မှု ရရှိရန်
-            "-o", f"{output_filename}.%(ext)s",
-            "--no-playlist"
-        ]
+        # YouTube မှာ တရားတော် စာသားကို နောက်က Auto တွဲပြီး အသံကြည်လင်တာကို အလိုအလျောက် ရှာဖွေခြင်း
+        search_keyword = urllib.parse.quote(f"{query} တရားတော်")
+        html = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={search_keyword}")
+        video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
         
-        # ဒေါင်းလုဒ်လုပ်ခြင်းကို စတင်သည်
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
-        if os.path.exists(output_path):
-            await status_msg.edit_text("🔄 အသံဖိုင် ပြောင်းလဲခြင်း ပြီးမြောက်ပါပြီ။ Bot မှ ပို့ပေးနေပါသည်... 📦")
+        if video_ids:
+            # အကောင်းဆုံး ပထမဆုံးရလဒ်ကို ယူသည်
+            video_url = f"https://www.youtube.com/watch?v={video_ids[0]}"
             
-            caption_text = f"🙏 {query} နာယူပူဇော်ရန်။"
+            # Telegram စာသား တည်ဆောက်ခြင်း
+            caption_text = f"🙏 **{query} တရားတော် နာယူရန်** 🙏\n\n🎧 တရားတော်အား အောက်ပါလင့်ခ်တွင် ချက်ချင်း တိုက်ရိုက်နာယူပူဇော်နိုင်ပါပြီခင်ဗျာ -\n{video_url}"
+            
+            # အစ်ကို လိုအပ်လို့ ထည့်ထားတဲ့ ကြော်ငြာစာသားရှိမှသာ အောက်ခြေတွင် ကပ်ပေးမည်
             if CURRENT_AD_TEXT:
-                caption_text += f"\n\n{CURRENT_AD_TEXT}"
+                caption_text += f"\n\n---\n{CURRENT_AD_TEXT}"
                 
-            # တရားအသံဖိုင်ကို တန်းပို့ပေးခြင်း
-            with open(output_path, 'rb') as audio_file:
-                await update.message.reply_audio(
-                    audio=audio_file,
-                    caption=caption_text,
-                    title=query,
-                    performer="Daily Buddha Bot",
-                    parse_mode="Markdown" if CURRENT_AD_TEXT else None
-                )
-            
-            # ပို့ပြီးရင် ဖုန်းမပြည့်အောင် ဖိုင်ကို ချက်ချင်း ပြန်ဖျက်သည်
-            os.remove(output_path)
+            await update.message.reply_text(caption_text, parse_mode="Markdown" if CURRENT_AD_TEXT else None, disable_web_page_preview=False)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("⚠️ တောင်းပန်ပါတယ်ဗျာ။ အဲဒီတရားတော်ကို ရှာမတွေ့ပါ သို့မဟုတ် အသံဖိုင် ပြောင်းလဲ၍ မရပါဗျာ။")
+            await status_msg.edit_text("⚠️ တောင်းပန်ပါတယ်ဗျာ။ အဲဒီတရားတော်ကို YouTube ပေါ်တွင် ရှာမတွေ့ပါဗျာ။")
             
     except Exception as e:
-        logging.error(f"Auto Search Error: {str(e)}")
-        await status_msg.edit_text("⚠️ စနစ်အတွင်း အမှားအယွင်း ဖြစ်ပေါ်သွားပါသဖြင့် ခဏနေမှ ပြန်စမ်းပေးပါဗျာ။")
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        logging.error(f"Search Error: {str(e)}")
+        await status_msg.edit_text("⚠️ လိုင်းကြပ်နေသဖြင့် ခဏနေမှ ပြန်စမ်းပေးပါဗျာ။")
 
 def main():
     if not BOT_TOKEN: return
     application = Application.builder().token(BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("setad", set_ad_command)) # ကြော်ငြာ ထိန်းချုပ်ရန်
+    application.add_handler(CommandHandler("setad", set_ad_command)) 
     
-    # User ရိုက်သမျှ စာသားကို Auto ရှာပေးမည့် Handler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_download_audio))
+    # User ရိုက်သမျှစာကို Auto ရှာပေးမည့်စနစ်
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_buddha_dhamma))
 
-    logging.info("YouTube Audio Search Bot successfully started...")
+    logging.info("Lightweight Auto-Search Bot successfully started...")
     application.run_polling()
 
 if __name__ == '__main__':
