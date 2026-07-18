@@ -1,11 +1,16 @@
 import os
 import logging
 import threading
-import urllib.request
-import re
+import subprocess
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+# static-ffmpeg ကို စနစ်ထဲ ချိတ်ဆက်ခြင်း
+from static_ffmpeg import run
+
+# FFmpeg လမ်းကြောင်းကို စနစ်ထဲသို့ Auto ထည့်သွင်းခြင်း
+ffmpeg_bin, ffprobe_bin = run.get_or_fetch_platform_executables_else_raise()
+os.environ["PATH"] += os.pathsep + os.path.dirname(ffmpeg_bin)
 
 # Logging စနစ်
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -20,12 +25,9 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-
-# 📢 ကြော်ငြာစာသား (အစပိုင်းတွင် အလွတ်ဖြစ်ပြီး၊ အစ်ကို /setad ပို့မှသာ အလုပ်လုပ်မည်)
 CURRENT_AD_TEXT = ""
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start ပြသမည့်စာ"""
     start_text = (
         "မင်္ဂလာပါဗျာ 🙏\n\n"
         "Daily Buddha Dhamma Bot မှ ကြိုဆိုပါတယ်ဗျာ။\n"
@@ -34,54 +36,67 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_text = f"{start_text}\n\n{CURRENT_AD_TEXT}" if CURRENT_AD_TEXT else start_text
     await update.message.reply_text(final_text, parse_mode="Markdown" if CURRENT_AD_TEXT else None, disable_web_page_preview=True)
 
-# 🛠️ [အစ်ကို့အတွက် ကြော်ငြာ အဖွင့်/အပိတ် Command]
 async def set_ad_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """အစ်ကိုက `/setad [စာသား]` ဟု ပို့လိုက်မှသာ ကြော်ငြာဝင်မည့်စနစ်"""
     global CURRENT_AD_TEXT
     ad_input = " ".join(context.args)
-    
     if not ad_input:
         CURRENT_AD_TEXT = ""
         await update.message.reply_text("✨ ကြော်ငြာစနစ်ကို ပိတ်လိုက်ပါပြီ။ ယခုအချိန်မှစ၍ တရားဖိုင်များ သန့်သန့်လေးပဲ ကျလာပါမည်ဗျာ။")
         return
-        
     CURRENT_AD_TEXT = ad_input
     await update.message.reply_text(f"✅ ကြော်ငြာအသစ်ကို သိမ်းဆည်းလိုက်ပါပြီဗျာ -\n\n{CURRENT_AD_TEXT}")
 
-async def search_buddha_dhamma(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User ရိုက်လိုက်တဲ့ စာသားကို YouTube ပေါ်မှာ ခေါင်းစဉ်အတိုင်း Auto ရှာပြီး ကစားသမားလင့်ခ် တန်းပေးမည့်စနစ်"""
+async def search_and_download_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
-    
     if query.startswith('/'):
         return
 
-    status_msg = await update.message.reply_text(f"🔍 '{query}' တရားတော်အား အင်တာနက်ပေါ်တွင် အလိုအလျောက် ရှာဖွေနေပါသည်... 🙏")
+    status_msg = await update.message.reply_text(f"🔍 '{query}' ကို အင်တာနက်ပေါ်တွင် အလိုအလျောက် ရှာဖွေနေပါသည်... 🙏")
+    
+    # နေရာလွတ်မပါသော ဖိုင်အမည် သတ်မှတ်ခြင်း
+    output_filename = f"dhamma_{update.message.chat_id}"
+    output_path = f"{output_filename}.mp3"
     
     try:
-        # YouTube မှာ တရားတော် စာသားကို နောက်က Auto တွဲပြီး အသံကြည်လင်တာကို အလိုအလျောက် ရှာဖွေခြင်း
-        search_keyword = urllib.parse.quote(f"{query} တရားတော်")
-        html = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={search_keyword}")
-        video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
+        # yt-dlp ဖြင့် အသံဖိုင်ကို Auto ရှာပြီး အရည်အသွေးမြင့် MP3 ဒေါင်းလုဒ်ဆွဲခြင်း
+        cmd = [
+            "yt-dlp",
+            f"ytsearch1:{query} တရားတော်",
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+            "-o", f"{output_filename}.%(ext)s",
+            "--no-playlist",
+            "--ffmpeg-location", ffmpeg_bin  # static-ffmpeg ရဲ့ လမ်းကြောင်းကို လမ်းညွှန်ခြင်း
+        ]
         
-        if video_ids:
-            # အကောင်းဆုံး ပထမဆုံးရလဒ်ကို ယူသည်
-            video_url = f"https://www.youtube.com/watch?v={video_ids[0]}"
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        
+        if os.path.exists(output_path):
+            await status_msg.edit_text("🔄 အသံဖိုင် ရရှိပါပြီ။ Bot မှ ပို့ပေးနေပါသည်... 📦")
             
-            # Telegram စာသား တည်ဆောက်ခြင်း
-            caption_text = f"🙏 **{query} တရားတော် နာယူရန်** 🙏\n\n🎧 တရားတော်အား အောက်ပါလင့်ခ်တွင် ချက်ချင်း တိုက်ရိုက်နာယူပူဇော်နိုင်ပါပြီခင်ဗျာ -\n{video_url}"
-            
-            # အစ်ကို လိုအပ်လို့ ထည့်ထားတဲ့ ကြော်ငြာစာသားရှိမှသာ အောက်ခြေတွင် ကပ်ပေးမည်
+            caption_text = f"🙏 {query} နာယူပူဇော်ရန်။"
             if CURRENT_AD_TEXT:
-                caption_text += f"\n\n---\n{CURRENT_AD_TEXT}"
+                caption_text += f"\n\n{CURRENT_AD_TEXT}"
                 
-            await update.message.reply_text(caption_text, parse_mode="Markdown" if CURRENT_AD_TEXT else None, disable_web_page_preview=False)
+            with open(output_path, 'rb') as audio_file:
+                await update.message.reply_audio(
+                    audio=audio_file,
+                    caption=caption_text,
+                    title=query,
+                    performer="Daily Buddha Bot",
+                    parse_mode="Markdown" if CURRENT_AD_TEXT else None
+                )
+            os.remove(output_path)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("⚠️ တောင်းပန်ပါတယ်ဗျာ။ အဲဒီတရားတော်ကို YouTube ပေါ်တွင် ရှာမတွေ့ပါဗျာ။")
+            await status_msg.edit_text("⚠️ တောင်းပန်ပါတယ်ဗျာ။ အဲဒီတရားတော်ကို ရှာမတွေ့ပါ သို့မဟုတ် ဖိုင်ပြောင်းလဲ၍ မရပါဗျာ။")
             
     except Exception as e:
-        logging.error(f"Search Error: {str(e)}")
-        await status_msg.edit_text("⚠️ လိုင်းကြပ်နေသဖြင့် ခဏနေမှ ပြန်စမ်းပေးပါဗျာ။")
+        logging.error(f"Auto Search Error: {str(e)}")
+        await status_msg.edit_text("⚠️ စနစ်အတွင်း အမှားအယွင်း ဖြစ်ပေါ်သွားပါသဖြင့် ခဏနေမှ ပြန်စမ်းပေးပါဗျာ။")
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
 def main():
     if not BOT_TOKEN: return
@@ -89,11 +104,9 @@ def main():
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("setad", set_ad_command)) 
-    
-    # User ရိုက်သမျှစာကို Auto ရှာပေးမည့်စနစ်
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_buddha_dhamma))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_download_audio))
 
-    logging.info("Lightweight Auto-Search Bot successfully started...")
+    logging.info("YouTube Audio Search Bot with Static-FFmpeg started...")
     application.run_polling()
 
 if __name__ == '__main__':
