@@ -1,25 +1,14 @@
 import os
 import logging
 import threading
-import yt_dlp
-import math
 from http.server import SimpleHTTPRequestHandler, HTTPServer
-from googleapiclient.discovery import build
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # Logging စနစ် သတ်မှတ်ခြင်း
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- 🛠️ static-ffmpeg လမ်းကြောင်း ချိတ်ဆက်ခြင်း ---
-try:
-    import static_ffmpeg
-    static_ffmpeg.add_paths()
-    logging.info("Static FFmpeg paths added successfully.")
-except Exception as e:
-    logging.error(f"Static FFmpeg Error: {str(e)}")
-
-# Dummy Server (Render Uptime အတွက်)
+# Dummy Server (Render Uptime အမြဲရစေရန် ပုံသေမောင်းနှင်ခြင်း)
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
@@ -28,156 +17,111 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# Environment Variables မှ Token ယူခြင်း
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
-def youtube_search(query, is_paritta=False):
-    """YouTube API သုံးပြီး တရားတော်စစ်စစ်များကိုသာ ရှာဖွေပေးခြင်း"""
-    if not YOUTUBE_API_KEY:
-        logging.error("YouTube API Key is missing!")
-        return None
+# 📢 [အစ်ကို့အတွက် Channel ကြော်ငြာထည့်ရန်နေရာ] - ဤနေရာတွင် စိတ်ကြိုက်စာသားနှင့် လင့်ခ် ပြောင်းလဲနိုင်ပါသည်
+AD_TEXT = (
+    "\n\n--- ✨ ဓမ္မလမ်းပြ Channel ကြော်ငြာ ✨ ---\n"
+    "တရားတော်များ နေ့စဉ်နာယူရန် ကျွန်ုပ်တို့ Channel ကို Join ထားပါဦးဗျာ။\n"
+    "👉 [ဤနေရာတွင် သင့် Channel Link ကို အစားထိုးရန်](https://t.me/your_channel_username)"
+)
 
-    refined_query = f"{query} ပရိတ်တော် တရားတော်" if is_paritta else f"{query} တရားတော် တရားပွဲ ဓမ္မ"
+# 📌 ၁။ ဆရာတော်ကြီးများ၏ တရားတော်များ (/audio) အတွက် Telegram File ID များ
+# (Telegram ထဲတွင် ဖိုင်တင်ပြီး ရလာသော Unique File ID များကို ဤနေရာတွင် အစားထိုးပါ)
+DHAMMA_AUDIO_IDS = {
+    "သီတဂူ_တရားတော်": "BAACAgIAAxkBAAE...", 
+    "ချမ်းမြေ့_တရားတော်": "BAACAgIAAxkBAAE...",
+    "တိပိဋက_တရားတော်": "BAACAgIAAxkBAAE..."
+}
 
-    try:
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        request = youtube.search().list(
-            q=refined_query,
-            part="snippet",
-            maxResults=1,
-            type="video",
-            videoCategoryId="29"
-        )
-        response = request.execute()
-        
-        if response.get("items"):
-            video_id = response["items"][0]["id"]["videoId"]
-            return f"https://www.youtube.com/watch?v={video_id}"
-        return None
-    except Exception as e:
-        logging.error(f"YouTube API Error: {str(e)}")
-        return None
+# 📌 ၂။ ပရိတ်တော်များ (/paritta) အတွက် Telegram File ID များ
+PARITTA_AUDIO_IDS = {
+    "မင်္ဂလသုတ်": "BAACAgIAAxkBAAE...", 
+    "မေတ္တာသုတ်": "BAACAgIAAxkBAAE...",
+    "ရတနသုတ်": "BAACAgIAAxkBAAE...",
+    "ခန္ဓသုတ်": "BAACAgIAAxkBAAE...",
+    "မောရသုတ်": "BAACAgIAAxkBAAE...",
+    "ဝဋ္ဋသုတ်": "BAACAgIAAxkBAAE..."
+}
 
-# 📌 တရားရှာဖွေပြီး မိနစ် ၃၀ စီ အပိုင်းခွဲ၍ ဒေါင်းလုဒ်ဆွဲကာ ပို့ပေးသည့် အဓိက လုပ်ဆောင်ချက်
-async def process_download(query, message_object, context, is_paritta=False):
-    status_message = await message_object.reply_text(f"'{query}' တရားတော်ကို ရှာဖွေနေပါတယ်... ခဏစောင့်ပေးပါ 🙏")
+# --- Bot Commands Handlers ---
 
-    video_url = youtube_search(query, is_paritta)
-    
-    if not video_url:
-        await status_message.edit_text("တောင်းပန်ပါတယ်ခင်ဗျာ၊ အဆိုပါတရားတော်ကို ရှာမတွေ့ပါ (သို့မဟုတ်) YouTube API Error ရှိနေပါသည်။")
-        return
-
-    try:
-        # 🔥 [အရေးကြီးဆုံးပြောင်းလဲမှု] YouTube 429 Error ကို အပြီးတိုင်ကျော်ရန် OAuth2 (စာရင်းသွင်းစနစ်) သုံးခြင်း
-        ydl_opts_info = {
-            'format': 'bestaudio/best', 
-            'quiet': True,
-            'extractor_args': {
-                'youtube': {
-                    'oauth2_client': 'web',  # OAuth2 စနစ်ကို ဖွင့်ခြင်း
-                }
-            }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            title = info.get('title', query)
-            duration = info.get('duration', 0)
-
-        # မိနစ် ၃၀ (စက္ကန့် ၁၈၀၀) စီ အပိုင်းခွဲရန် တွက်ချက်ခြင်း
-        segment_duration = 1800 
-        total_parts = math.ceil(duration / segment_duration)
-        if total_parts == 0: total_parts = 1
-
-        await status_message.edit_text(f"🔄 တရားတော်ကြာချိန်မှာ စုစုပေါင်း {math.ceil(duration/60)} မိနစ် ဖြစ်သဖြင့် အပိုင်း ({total_parts}) ပိုင်းခွဲ၍ ပို့ပေးနေပါပြီ... 🙏")
-
-        for part in range(total_parts):
-            start_time = part * segment_duration
-            filename = f"dhamma_part_{part}_{info['id']}"
-            
-            ydl_opts_download = {
-                'format': 'bestaudio/best',
-                'outtmpl': f'{filename}.%(ext)s',
-                'external_downloader': 'ffmpeg',
-                'external_downloader_args': {
-                    'ffmpeg_args': ['-ss', str(start_time), '-t', str(segment_duration)]
-                },
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'quiet': True,
-                'extractor_args': {
-                    'youtube': {
-                        'oauth2_client': 'web',
-                    }
-                }
-            }
-
-            with yt_dlp.YoutubeDL(ydl_opts_download) as ydl_down:
-                ydl_down.download([video_url])
-
-            audio_file_path = f"{filename}.mp3"
-            
-            if os.path.exists(audio_file_path):
-                caption_text = f"🙏 တရားတော် - {title}\n📌 အပိုင်း - ({part + 1}/{total_parts})"
-                with open(audio_file_path, 'rb') as audio:
-                    await message_object.reply_audio(
-                        audio=audio, 
-                        title=f"{query} - အပိုင်း ({part + 1})", 
-                        performer="Daily Buddha Bot",
-                        caption=caption_text
-                    )
-                os.remove(audio_file_path)
-            else:
-                await message_object.reply_text(f"⚠️ အပိုင်း ({part + 1}) ကို ဖန်တီး၍ မရနိုင်ဖြစ်သွားပါသည်။")
-
-        await status_message.delete()
-        
-    except Exception as e:
-        logging.error(f"Download/Split Error: {str(e)}")
-        await status_message.edit_text("တရားတော်ကို ရယူပြီး အပိုင်းခွဲရာတွင် အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါသည်။")
-
-# --- Commands & Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/start ဟု နှိပ်လျှင် ပြသမည့် စာတန်းနှင့် ကြော်ငြာ"""
     start_text = (
         "မင်္ဂလာပါဗျာ 🙏\n\n"
         "Daily Buddha Dhamma Bot မှ ကြိုဆိုပါတယ်ဗျာ။\n"
-        "သင် နာယူလိုသော တရားတော်အမည် သို့မဟုတ် ဆရာတော်ဘွဲ့အမည်ကို ရိုက်ထည့်ပြီး ရှာဖွေနိုင်ပါတယ်ခင်ဗျာ။"
+        "အောက်ခြေရှိ **Menu** ခလုတ်ကို နှိပ်၍ မိမိနာယူလိုသော တရားတော်များကို လွယ်ကူစွာ ရွေးချယ်နိုင်ပါတယ်ခင်ဗျာ။"
     )
-    await update.message.reply_text(start_text)
+    await update.message.reply_text(start_text + AD_TEXT, parse_mode="Markdown", disable_web_page_preview=True)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text.strip()
-    
-    if "ပရိတ်" in user_text:
-        keyboard = [
-            [InlineKeyboardButton("✨ မင်္ဂလသုတ်", callback_data="မင်္ဂလသုတ်"), InlineKeyboardButton("✨ မေတ္တာသုတ်", callback_data="မေတ္တာသုတ်")],
-            [InlineKeyboardButton("✨ ရတနသုတ်", callback_data="ရတနသုတ်"), InlineKeyboardButton("✨ ခန္ဓသုတ်", callback_data="ခန္ဓသုတ်")],
-            [InlineKeyboardButton("✨ မောရသုတ်", callback_data="မောရသုတ်"), InlineKeyboardButton("✨ ဝဋ္ဋသုတ်", callback_data="ဝဋ္ဋသုတ်")],
-            [InlineKeyboardButton("✨ ဓဇဂ္ဂသုတ်", callback_data="ဓဇဂ္ဂသုတ်"), InlineKeyboardButton("✨ အာဋာနာဋိယသုတ်", callback_data="အာဋာနာဋိယသုတ်")],
-            [InlineKeyboardButton("✨ အင်္ဂုလိမာလသုတ်", callback_data="အင်္ဂုလိမာလသုတ်"), InlineKeyboardButton("✨ ပုဗ္ဗဏှသုတ်", callback_data="ပုဗ္ဗဏှသုတ်")],
-            [InlineKeyboardButton("✨ ဓရဏသုတ်", callback_data="ဓရဏသုတ်")]
-        ]
-        await update.message.reply_text("🪷 **ပရိတ်ကြီး ၁၁ သုတ်တော်များ** 🪷\n\nနာယူလိုသော သုတ်တော်ကို ရွေးချယ်ပါ -", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await process_download(user_text, update.message, context, is_paritta=False)
+async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/audio ဆရာတော်ကြီးများ၏ တရားတော်များ ခလုတ်စာရင်း"""
+    keyboard = [
+        [InlineKeyboardButton("🎙️ သီတဂူဆရာတော်ဘုရားကြီး", callback_data="သီတဂူ_တရားတော်")],
+        [InlineKeyboardButton("🎙️ ချမ်းမြေ့ဆရာတော်ဘုရားကြီး", callback_data="ချမ်းမြေ့_တရားတော်")],
+        [InlineKeyboardButton("🎙️ တိပိဋကဆရာတော်ဘုရားကြီး", callback_data="တိပိဋက_တရားတော်")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🪷 **နာယူလိုသော ဆရာတော်ကြီးများ၏ တရားတော်ကို ရွေးချယ်ပါ** 🪷", reply_markup=reply_markup)
+
+async def paritta_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/paritta ပရိတ်တော်များ ခလုတ်စာရင်း"""
+    keyboard = [
+        [InlineKeyboardButton("✨ မင်္ဂလသုတ်", callback_data="မင်္ဂလသုတ်"), InlineKeyboardButton("✨ မေတ္တာသုတ်", callback_data="မေတ္တာသုတ်")],
+        [InlineKeyboardButton("✨ ရတနသုတ်", callback_data="ရတနသုတ်"), InlineKeyboardButton("✨ ခန္ဓသုတ်", callback_data="ခန္ဓသုတ်")],
+        [InlineKeyboardButton("✨ မောရသုတ်", callback_data="မောရသုတ်"), InlineKeyboardButton("✨ ဝဋ္ဋသုတ်", callback_data="ဝဋ္ဋသုတ်")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🪷 **နာယူပူဇော်လိုသော ပရိတ်သုတ်တော်ကို ရွေးချယ်ပါ** 🪷", reply_markup=reply_markup)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User များ ခလုတ်နှိပ်သည့်အခါ Error မရှိဘဲ တိုက်ရိုက် ဖိုင်ပို့ပေးခြင်း"""
     query = update.callback_query
     await query.answer()
-    await process_download(query.data, query.message, context, is_paritta=True)
+    choice = query.data
+    
+    # ရွေးချယ်ထားသော အသံဖိုင် ID ကို လှမ်းယူခြင်း
+    audio_id = PARITTA_AUDIO_IDS.get(choice) or DHAMMA_AUDIO_IDS.get(choice)
+    
+    if audio_id and audio_id != "BAACAgIAAxkBAAE...":
+        # အသံဖိုင်ကို တိုက်ရိုက်ပို့ပြီး အောက်ခြေတွင် ကြော်ငြာစာသား အလိုအလျောက် ကပ်ပေးခြင်း
+        await query.message.reply_audio(
+            audio=audio_id, 
+            caption=f"🙏 {choice.replace('_', ' ')} နာယူပူဇော်ရန်။" + AD_TEXT,
+            parse_mode="Markdown"
+        )
+    else:
+        # ဖိုင် ID မထည့်ရသေးပါက ပြသမည့် စာသားအဆင်သင့်စနစ်
+        await query.message.reply_text(
+            f"🪷 **{choice.replace('_', ' ')}** တရားတော်ဖိုင်ကို စနစ်အတွင်း မကြာမီ အချောသတ် ဖြည့်သွင်းပေးပါမည်ခင်ဗျာ 🙏" + AD_TEXT,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+
+async def handle_user_text_restrict(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User များ စာလျှောက်ရိုက်ပြီး ဘောကလိခြင်း၊ စနစ်အား ကြောင်စေခြင်းမှ ကာကွယ်ရန်"""
+    await update.message.reply_text(
+        "⚠️ တောင်းပန်ပါတယ်ခင်ဗျာ။ စာရိုက်၍ ရှာဖွေခြင်းကို ပိတ်ထားပါသည်။ အောက်ခြေရှိ **Menu** ခလုတ်ကိုနှိပ်၍ တရားတော်များကိုသာ ရွေးချယ်နာယူပေးပါရန် 🙏"
+    )
 
 def main():
     if not BOT_TOKEN:
-        logging.error("Error: TELEGRAM_BOT_TOKEN ဖြည့်သွင်းရန် လိုအပ်ပါသည်။")
+        logging.error("TELEGRAM_BOT_TOKEN ဖြည့်သွင်းရန် လိုအပ်ပါသည်။")
         return
 
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # 📌 အစ်ကိုအလိုရှိသည့် အလုပ်လုပ်မည့် Menu သုံးခုသာ သိမ်းဆည်းခြင်း
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CommandHandler("audio", audio_command))
+    application.add_handler(CommandHandler("paritta", paritta_command))
+    
+    # ခလုတ်နှိပ်ခြင်းနှင့် စာရိုက်ခြင်း ထိန်းချုပ်မှုများ
     application.add_handler(CallbackQueryHandler(button_click))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_restrict))
 
-    logging.info("Bot is successfully started with OAuth2 Authentication system...")
+    logging.info("Clean Bot with Strict 3-Menu Layout and Ads system successfully deployed...")
     application.run_polling()
 
 if __name__ == '__main__':
